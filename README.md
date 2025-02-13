@@ -1,133 +1,118 @@
-# 🎯 Sales Targeting and Analysis System
+# Sales Targeting System
 
-![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Status](https://img.shields.io/badge/status-production-green)
+A Python-based application for managing customer relationships, analyzing sales data, and tracking promotional performance for wine retailers.
 
-A powerful, data-driven sales targeting and analysis system designed to supercharge your sales team's effectiveness. This application combines intelligent customer targeting, comprehensive sales analysis, and automated promotion period tracking to help you make informed decisions and boost your sales performance.
+## Features
 
-## ✨ Features
+- **Customer Targeting**
+  - Find potential customers based on purchase history
+  - Cross-sell targeting from entry-level to premium wines
+  - Hot Potato analysis for top product buyers
+  - Advanced filtering by inactivity and contact history
 
-### 🎯 Smart Customer Targeting
-- **Hot Potato Analysis**: Identify your most engaged customers for specific products
-- **Cross-Sell Detection**: Find opportunities to upgrade customers to premium products
-- **Intelligent Filtering**: Filter out recently contacted customers to avoid oversaturation
-- **Export Ready**: Generate targeted customer lists with full contact information
+- **Call Tracking**
+  - Record customer interactions
+  - Track call outcomes
+  - View customer purchase history
+  - Export call histories
 
-### 📊 Sales Performance Analysis
-- **Brand Performance Dashboard**: Real-time visualization of brand performance metrics
-- **Growth Tracking**: Automated calculation of year-over-year and period-over-period growth
-- **Top/Bottom Analysis**: Instant identification of best and worst performing products
-- **Visual Insights**: Interactive charts and graphs for better decision making
+- **Sales Analysis**
+  - Compare performance between time periods
+  - Track brand performance
+  - Analyze promotional period results
+  - View top/bottom performing products
 
-### 📅 Promotion Period Management
-- **Period Tracking**: Set up and manage promotional periods
-- **Automated Comparisons**: Compare current promotion performance against historical data
-- **Flexible Setup**: Support for multiple promotion periods with custom date ranges
+## Prerequisites
 
-### 📞 Call Tracking System
-- **Customer History**: Track all customer interactions
-- **Status Tracking**: Monitor call outcomes and follow-ups
-- **Quick Access**: Instant access to customer purchase history and preferences
-- **Export Capabilities**: Generate call history reports for analysis
+- Python 3.8 or higher
+- PostgreSQL database access
+- Network access to corkscrew.mywinesense.com
 
-## 🚀 Getting Started
+## Installation
 
-### Prerequisites
-```bash
-pip install pyyaml pandas matplotlib tkinter pillow
-```
-
-### Installation
 1. Clone the repository
 ```bash
-git clone https://github.com/yourusername/sales-targeting-system.git
+git clone [repository-url]
 cd sales-targeting-system
 ```
+2. Create and activate virtual environment
+```bash
+# Windows
+python -m venv venv
+venv\Scripts\activate
 
-2. Install required dependencies
+# Linux/Mac
+python -m venv venv
+source venv/bin/activate
+```
+3. Install required packages
 ```bash
 pip install -r requirements.txt
 ```
+4. Create .env file in project root with database credentials:
+```bash
+DB_NAME=sales_targeting
+DB_USER=sales_app
+DB_PASSWORD=your_password
+DB_HOST=corkscrew.mywinesense.com
+DB_PORT=5432
+```
 
-3. Run the application
+5. Running the Application
 ```bash
 python sales_target-inator.py
 ```
 
-## 📖 Usage
+## Data Import Process
+For initial setup, data needs to be imported in this order:
 
-### Data Import
-1. Export your sales data from Point of Sale system
-2. Use the Import Data tab to load:
-   - Sales history
-   - Customer information
-   - Promotion periods
+- Customer data 
+- Sales history
+- Promotion periods (optional)
 
-### Finding Potential Customers
-1. Select target brand or product
-2. Set inactivity period
-3. Click "Find Potential Customers"
-4. Export results or transfer to call tracking
+Refer to the Import Data tab in the application for detailed instructions.
+## File Structure
 
-### Analyzing Sales Performance
-1. Select comparison period
-2. View brand performance dashboard
-3. Drill down into specific brands for detailed analysis
-4. Track promotion period performance
-
-## 🎨 Features in Detail
-
-### Brand Analysis Dashboard
-- Overall brand performance metrics
-- Top and bottom performing products
-- Growth indicators and trends
-- Period-over-period comparisons
-
-### Customer Targeting Logic
-- Intelligent analysis of purchase patterns
-- Premium product affinity detection
-- Purchase frequency analysis
-- Cross-sell opportunity identification
-
-### Call Tracking Integration
-- Seamless transfer from targeting to call tracking
-- Complete customer purchase history
-- Contact information management
-- Call outcome tracking and analysis
-
-## 🛠 Configuration
-
-### Logging Levels
-Adjust logging configuration in `logging_config.yml`:
-```yaml
-loggers:
-  sales_targeting:
-    level: INFO  # Set to DEBUG for detailed logs
-  comparison_system:
-    level: INFO  # Set to DEBUG for detailed logs
+```bash
+sales-targeting-system/
+├── sales_target-inator.py   # Main application
+├── comparison_system.py     # Sales comparison logic
+├── db_config.py            # Database configuration
+├── logging_config.py       # Logging setup
+├── requirements.txt        # Package dependencies
+└── .env                    # Database credentials (not in git)
 ```
 
-### Database Configuration
-- SQLite database for portability
-- Automatic database creation and schema management
-- Built-in data validation and error handling
+## Database Tables
 
-## 🤝 Contributing
+- customers - Customer contact information
+- sales_history - Transaction records
+- call_tracking - Call interaction records
+- promotion_periods - Promotional period definitions
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+## Common Issues
 
-## 📝 License
+### Database Connection
 
-This project is licensed under the MIT License - see the LICENSE.md file for details.
+- Verify .env file exists with correct credentials
+- Check network connectivity to database server
+- Ensure database port (5432) is accessible
 
-## 🙏 Acknowledgments
 
-- Built with Python and Tkinter
-- Uses Matplotlib for visualization
-- SQLite for data storage
-- Special thanks to all contributors
+### Data Import
 
----
+- Customer data must be imported before sales history
+- CSV files should match expected format
+- Check CSV for special characters or formatting issues
 
-Made with ❤️ for sales teams who want to work smarter, not harder.
+## Development
+
+Code repository is maintained in version control
+Use Python's built-in venv for dependency management
+Follow existing code style and documentation patterns
+Test changes in development environment before deploying
+
+## License
+Internal company use only. All rights reserved.
+
+Last updated: February 2024

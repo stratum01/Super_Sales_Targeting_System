@@ -1,0 +1,22 @@
+# Database
+psycopg2-binary==2.9.9
+python-dotenv==1.0.0
+
+# Data Processing
+pandas==2.1.4
+numpy==1.26.3
+
+# GUI Components
+pillow==10.2.0
+tkcalendar==1.6.1
+
+# File Handling
+openpyxl==3.1.2  # For Excel file support
+pyyaml==6.0.1    # For logging configuration
+
+# Visualization
+matplotlib==3.8.2
+
+# Development Tools
+black==24.1.1    # Code formatting
+flake8==7.0.0    # Code linting
