@@ -1,0 +1,122 @@
+2025-02-13 18:36:57,214 [INFO] comparison_system: Querying data for periods: 2024-02-05 to 2024-02-11 and 2025-02-03 to 2025-02-09
+2025-02-13 18:40:41,067 [INFO] sales_targeting: Starting import from C:/Users/mrjch/Documents/WineSenseStuff/SalesOutreach-749996f8f8599d8ead097ee84d6b08c9ae6328a6/BDN Customer Master List.csv
+2025-02-13 19:35:12,647 [ERROR] comparison_system: Error updating period info: function round(double precision, integer) does not exist
+LINE 26:                         ROUND(days_elapsed::float / total_da...
+                                 ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+2025-02-13 19:35:12,891 [ERROR] comparison_system: Error setting up comparison: function round(double precision, integer) does not exist
+LINE 26:                         ROUND(days_elapsed::float / total_da...
+                                 ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+2025-02-13 19:41:04,514 [ERROR] comparison_system: Error getting current period info: function round(double precision, integer) does not exist
+LINE 26:                             ROUND(days_elapsed::float / tota...
+                                     ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+2025-02-13 19:41:04,514 [ERROR] comparison_system: Error updating period info: Could not determine current promotion period: function round(double precision, integer) does not exist
+LINE 26:                             ROUND(days_elapsed::float / tota...
+                                     ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+2025-02-13 19:41:04,515 [ERROR] comparison_system: Error setting up comparison: 'PromotionManager' object has no attribute 'get_comparison_dates'
+2025-02-13 19:41:08,871 [ERROR] comparison_system: Error getting current period info: function round(double precision, integer) does not exist
+LINE 26:                             ROUND(days_elapsed::float / tota...
+                                     ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+2025-02-13 19:41:08,871 [ERROR] comparison_system: Error updating period info: Could not determine current promotion period: function round(double precision, integer) does not exist
+LINE 26:                             ROUND(days_elapsed::float / tota...
+                                     ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+2025-02-13 19:41:08,871 [ERROR] comparison_system: Error setting up comparison: 'PromotionManager' object has no attribute 'get_comparison_dates'
+2025-02-13 19:42:07,542 [ERROR] comparison_system: Error getting current period info: function round(double precision, integer) does not exist
+LINE 26:                             ROUND(days_elapsed::float / tota...
+                                     ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+2025-02-13 19:42:07,542 [ERROR] comparison_system: Error updating period info: Could not determine current promotion period: function round(double precision, integer) does not exist
+LINE 26:                             ROUND(days_elapsed::float / tota...
+                                     ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+
+2025-02-13 19:42:07,542 [ERROR] comparison_system: Error setting up comparison: 'PromotionManager' object has no attribute 'get_comparison_dates'
+2025-02-13 21:16:12,800 [ERROR] comparison_system: Error getting current period info: 'PromotionManager' object has no attribute '_needs_cache_refresh'
+2025-02-13 21:16:12,801 [ERROR] comparison_system: Error setting up comparison: Could not determine current promotion period: 'PromotionManager' object has no attribute '_needs_cache_refresh'
+2025-02-13 21:17:14,412 [INFO] comparison_system: Querying data for periods: 2025-02-13 to 2025-02-13 and 2025-02-13 to 2025-02-13
+2025-02-13 21:17:21,478 [INFO] comparison_system: Querying data for periods: 2024-02-05 to 2024-02-11 and 2025-02-03 to 2025-02-09
+2025-02-13 21:17:28,129 [ERROR] comparison_system: Error getting current period info: 'PromotionManager' object has no attribute '_needs_cache_refresh'
+2025-02-13 21:17:28,130 [ERROR] comparison_system: Error updating period info: Could not determine current promotion period: 'PromotionManager' object has no attribute '_needs_cache_refresh'
+2025-02-13 21:17:28,130 [ERROR] comparison_system: Error getting current period info: 'PromotionManager' object has no attribute '_needs_cache_refresh'
+2025-02-13 21:17:28,130 [ERROR] comparison_system: Error setting up comparison: Could not determine current promotion period: 'PromotionManager' object has no attribute '_needs_cache_refresh'
+2025-02-13 21:23:40,637 [ERROR] comparison_system: Error getting current period info: 'PromotionManager' object has no attribute '_needs_cache_refresh'
+2025-02-13 21:23:40,637 [ERROR] comparison_system: Error updating period info: Could not determine current promotion period: 'PromotionManager' object has no attribute '_needs_cache_refresh'
+2025-02-13 21:44:35,155 [INFO] comparison_system: Querying data for periods: 2024-02-12 to 2024-02-14 and 2025-02-10 to 2025-02-12
+2025-02-13 21:49:49,185 [ERROR] comparison_system: Error getting current period info: 'PromotionManager' object has no attribute '_needs_cache_refresh'
+2025-02-13 21:49:49,185 [ERROR] comparison_system: Error setting promotion dates: Could not determine current promotion period: 'PromotionManager' object has no attribute '_needs_cache_refresh'
+2025-02-13 21:52:55,333 [INFO] comparison_system: Querying data for periods: 2024-01-29 to 2024-02-15 and 2025-01-27 to 2025-02-12
+2025-02-13 21:53:03,444 [INFO] comparison_system: Querying data for periods: 2024-01-29 to 2024-02-15 and 2025-01-27 to 2025-02-12
+2025-02-13 21:53:04,545 [INFO] comparison_system: Querying data for periods: 2024-01-29 to 2024-02-15 and 2025-01-27 to 2025-02-12
+2025-02-13 21:56:25,786 [INFO] sales_targeting: Starting import from C:/Users/mrjch/Documents/WineSenseStuff/SalesOutreach-749996f8f8599d8ead097ee84d6b08c9ae6328a6/BdnPromoSalesComparisionReport.csv
+2025-02-13 21:56:26,217 [ERROR] sales_targeting: Error in import_customer_data: 'phone'
+Traceback (most recent call last):
+  File "C:\Users\mrjch\AppData\Local\Programs\Python\Python313\Lib\site-packages\pandas\core\indexes\base.py", line 3805, in get_loc
+    return self._engine.get_loc(casted_key)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "index.pyx", line 167, in pandas._libs.index.IndexEngine.get_loc
+  File "index.pyx", line 196, in pandas._libs.index.IndexEngine.get_loc
+  File "pandas\\_libs\\hashtable_class_helper.pxi", line 7081, in pandas._libs.hashtable.PyObjectHashTable.get_item
+  File "pandas\\_libs\\hashtable_class_helper.pxi", line 7089, in pandas._libs.hashtable.PyObjectHashTable.get_item
+KeyError: 'phone'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\mrjch\PycharmProjects\Sales_Targeting_System\sales_target-inator.py", line 52, in import_customer_data
+    df['phone'] = df['phone'].apply(
+                  ~~^^^^^^^^^
+  File "C:\Users\mrjch\AppData\Local\Programs\Python\Python313\Lib\site-packages\pandas\core\frame.py", line 4102, in __getitem__
+    indexer = self.columns.get_loc(key)
+  File "C:\Users\mrjch\AppData\Local\Programs\Python\Python313\Lib\site-packages\pandas\core\indexes\base.py", line 3812, in get_loc
+    raise KeyError(key) from err
+KeyError: 'phone'
+2025-02-13 22:07:54,060 [INFO] comparison_system: Querying data for periods: 2024-01-29 to 2024-02-15 and 2025-01-27 to 2025-02-12
+2025-02-13 22:08:20,689 [INFO] comparison_system: Querying data for periods: 2024-01-29 to 2024-02-15 and 2025-01-27 to 2025-02-12
+2025-02-13 22:11:53,594 [INFO] comparison_system: Querying data for periods: 2024-01-29 to 2024-02-15 and 2025-01-27 to 2025-02-12
+2025-02-13 22:22:43,790 [INFO] comparison_system: Querying data for periods: 2025-02-13 to 2025-02-13 and 2025-02-13 to 2025-02-13
+2025-02-13 22:22:47,711 [INFO] comparison_system: Querying data for periods: 2024-01-29 to 2024-02-15 and 2025-01-27 to 2025-02-12
+2025-02-13 22:22:48,803 [INFO] comparison_system: Querying data for periods: 2024-01-29 to 2024-02-15 and 2025-01-27 to 2025-02-12
+2025-02-13 22:42:29,114 [INFO] comparison_system: Querying data for periods: 2024-01-29 to 2024-02-15 and 2025-01-27 to 2025-02-12
+2025-02-13 22:42:30,260 [INFO] comparison_system: Querying data for periods: 2024-01-29 to 2024-02-15 and 2025-01-27 to 2025-02-12
+2025-02-13 23:47:44,913 [INFO] comparison_system: Querying data for periods: 2024-01-29 to 2024-02-15 and 2025-01-27 to 2025-02-12
+2025-02-13 23:48:06,547 [INFO] comparison_system: Querying data for periods: 2024-02-12 to 2024-02-14 and 2025-02-10 to 2025-02-12
+2025-02-14 00:03:30,587 [INFO] comparison_system: Querying data for periods: 2024-01-29 to 2024-02-16 and 2025-01-27 to 2025-02-13
+2025-02-14 09:13:53,645 [INFO] sales_targeting: Starting import from C:/Users/mrjch/PycharmProjects/Sales_Targeting_System/output5.csv
+2025-02-14 09:13:53,674 [ERROR] sales_targeting: Error in import_customer_data: 'phone'
+Traceback (most recent call last):
+  File "C:\Users\mrjch\AppData\Local\Programs\Python\Python313\Lib\site-packages\pandas\core\indexes\base.py", line 3805, in get_loc
+    return self._engine.get_loc(casted_key)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "index.pyx", line 167, in pandas._libs.index.IndexEngine.get_loc
+  File "index.pyx", line 196, in pandas._libs.index.IndexEngine.get_loc
+  File "pandas\\_libs\\hashtable_class_helper.pxi", line 7081, in pandas._libs.hashtable.PyObjectHashTable.get_item
+  File "pandas\\_libs\\hashtable_class_helper.pxi", line 7089, in pandas._libs.hashtable.PyObjectHashTable.get_item
+KeyError: 'phone'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\mrjch\PycharmProjects\Sales_Targeting_System\sales_target-inator.py", line 52, in import_customer_data
+    df['phone'] = df['phone'].apply(
+                  ~~^^^^^^^^^
+  File "C:\Users\mrjch\AppData\Local\Programs\Python\Python313\Lib\site-packages\pandas\core\frame.py", line 4102, in __getitem__
+    indexer = self.columns.get_loc(key)
+  File "C:\Users\mrjch\AppData\Local\Programs\Python\Python313\Lib\site-packages\pandas\core\indexes\base.py", line 3812, in get_loc
+    raise KeyError(key) from err
+KeyError: 'phone'
+2025-02-14 10:13:50,420 [INFO] comparison_system: Querying data for periods: 2024-01-29 to 2024-02-16 and 2025-01-27 to 2025-02-13
+2025-02-14 10:14:21,248 [INFO] comparison_system: Querying data for periods: 2024-01-29 to 2024-02-16 and 2025-01-27 to 2025-02-13
+2025-02-14 12:36:52,096 [INFO] comparison_system: Querying data for periods: 2024-01-29 to 2024-02-16 and 2025-01-27 to 2025-02-13
+2025-02-14 12:55:22,330 [INFO] comparison_system: Querying data for periods: 2024-01-29 to 2024-02-16 and 2025-01-27 to 2025-02-13

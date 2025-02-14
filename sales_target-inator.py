@@ -116,12 +116,20 @@ class SalesTargetingSystem:
             self.logger.error(f"Error in import_customer_data: {str(e)}", exc_info=True)
             raise Exception(f"Error importing customer data: {str(e)}")
 
-    def import_csv(self, csv_path, mode='append'):
+    def import_csv(self, csv_path, mode='append', progress_callback=None):
         """Import sales data from CSV file"""
         try:
+            if progress_callback:
+                progress_callback(0, 100, "Reading CSV file...")
+
             # Read CSV with all columns as strings initially
             df = pd.read_csv(csv_path, dtype=str)
-            df = df.iloc[:, 1:]  # Drop the first column
+            # Drop any completely empty columns
+            df = df.dropna(axis=1, how='all')
+            total_rows = len(df)
+
+            if progress_callback:
+                progress_callback(10, 100, "Processing data...")
 
             # Clean column names
             df.columns = df.columns.str.strip().str.strip('"')
@@ -149,41 +157,103 @@ class SalesTargetingSystem:
             for col in string_columns:
                 df[col] = df[col].str.strip('"')
 
+            if progress_callback:
+                progress_callback(20, 100, "Verifying data...")
+
+            # Track successful and failed records
+            successful_records = []
+            failed_records = []
+
             with db_config.get_cursor() as cursor:
                 if mode == 'replace':
+                    if progress_callback:
+                        progress_callback(25, 100, "Clearing existing data...")
                     cursor.execute('TRUNCATE TABLE sales_history CASCADE')
                 else:
                     # Get existing invoice IDs
+                    if progress_callback:
+                        progress_callback(25, 100, "Checking for existing records...")
                     cursor.execute('SELECT DISTINCT invoice_id FROM sales_history')
                     existing_invoices = {row[0] for row in cursor.fetchall()}
                     df = df[~df['invoice_id'].isin(existing_invoices)]
 
-                if not df.empty:
-                    # Prepare data for bulk insert
-                    data = [
-                        (row['invoice_id'], row['customer_id'], row['brand'],
-                         row['units_sold'], row['item'], row['customer_name'],
-                         row['date_sold'])
-                        for _, row in df.iterrows()
-                    ]
+                # First, verify which customers exist
+                if progress_callback:
+                    progress_callback(30, 100, "Verifying customer records...")
+                cursor.execute('SELECT customer_id FROM customers')
+                valid_customers = {row[0] for row in cursor.fetchall()}
 
-                    # Bulk insert using execute_values
-                    execute_values(
-                        cursor,
-                        """
-                        INSERT INTO sales_history (
-                            invoice_id, customer_id, brand, units_sold, 
-                            item, customer_name, date_sold
-                        ) VALUES %s
-                        """,
-                        data,
-                        template='(%s, %s, %s, %s, %s, %s, %s)'
-                    )
+                # Process each record individually
+                rows_to_process = len(df)
+                for idx, (_, row) in enumerate(df.iterrows()):
+                    try:
+                        if pd.isna(row['customer_id']) or str(row['customer_id']).strip() == '' or '(Totals)' in str(
+                                row['customer_id']):
+                            continue
 
-                    return f"Successfully imported {len(df)} new records"
-                return "No new records to import"
+                        # Check if customer exists
+                        if row['customer_id'] not in valid_customers:
+                            failed_records.append({
+                                'invoice_id': row['invoice_id'],
+                                'customer_id': row['customer_id'],
+                                'customer_name': row['customer_name'],
+                                'date_sold': row['date_sold'],
+                                'error': 'Customer ID not found in database'
+                            })
+                            continue
+
+                        # Insert the record
+                        cursor.execute("""
+                            INSERT INTO sales_history (
+                                invoice_id, customer_id, brand, units_sold, 
+                                item, customer_name, date_sold
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        """, (
+                            row['invoice_id'], row['customer_id'], row['brand'],
+                            row['units_sold'], row['item'], row['customer_name'],
+                            row['date_sold']
+                        ))
+                        successful_records.append(row['invoice_id'])
+
+                        # Update progress every 100 records
+                        if progress_callback and idx % 100 == 0:
+                            progress_value = 30 + (idx / rows_to_process * 60)  # Progress from 30% to 90%
+                            progress_callback(progress_value, 100,
+                                f"Processing records: {idx}/{rows_to_process} ({len(failed_records)} failed)")
+
+                    except Exception as e:
+                        failed_records.append({
+                            'invoice_id': row['invoice_id'],
+                            'customer_id': row['customer_id'],
+                            'customer_name': row['customer_name'],
+                            'date_sold': row['date_sold'],
+                            'error': str(e)
+                        })
+
+                # Save failed records to CSV if there are any
+                if failed_records:
+                    if progress_callback:
+                        progress_callback(90, 100, "Saving failed records...")
+                    failed_df = pd.DataFrame(failed_records)
+                    failed_csv_path = csv_path.replace('.csv', '_failed_imports.csv')
+                    failed_df.to_csv(failed_csv_path, index=False)
+
+                if progress_callback:
+                    progress_callback(100, 100, "Import complete!")
+
+                summary = (
+                    f"Successfully imported {len(successful_records)} records.\n"
+                    f"Failed to import {len(failed_records)} records.\n"
+                )
+
+                if failed_records:
+                    summary += f"Failed records saved to: {failed_csv_path}"
+
+                return summary
 
         except Exception as e:
+            if progress_callback:
+                progress_callback(100, 100, f"Error: {str(e)}")
             raise Exception(f"Error importing CSV: {str(e)}")
 
     def get_customer_info(self, customer_id):
@@ -495,12 +565,12 @@ class SalesTargetingSystem:
 class SalesTargetingGUI:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("Sales Targeting System")
-        self.root.geometry("800x600")
+        self.root.title("Sales Targeting System - Brandon")
+        self.root.geometry("1000x800")
 
         # Initialize systems
         self.system = SalesTargetingSystem()
-        self.comparison_system = ComparisonSystem()  # Updated for PostgreSQL
+        self.comparison_system = ComparisonSystem()
         self.logger = get_logger('sales_targeting')
 
         # Create notebook for tabs
@@ -508,10 +578,136 @@ class SalesTargetingGUI:
         self.notebook.pack(expand=True, fill='both', padx=10, pady=5)
 
         # Create tabs
-        self.setup_import_tab()
+        self.setup_landing_tab()
+        self.setup_comparison_tab()
         self.setup_targeting_tab()
         self.setup_call_tracking_tab()
-        self.setup_comparison_tab()
+        self.setup_import_tab()
+
+    def import_csv(self):
+        """Handle sales data CSV import"""
+        filename = filedialog.askopenfilename(
+            filetypes=[("CSV Files", "*.csv")]
+        )
+        if filename:
+            try:
+                mode = self.import_mode.get()
+                if mode == 'replace':
+                    if not messagebox.askyesno("Confirm Replace",
+                                               "This will delete all existing sales data. Are you sure?"):
+                        return
+
+                # Create progress dialog
+                progress_window = tk.Toplevel(self.root)
+                progress_window.title("Importing Data")
+                progress_window.geometry("300x150")
+                progress_window.transient(self.root)
+                progress_window.grab_set()
+
+                # Add progress bar and labels
+                ttk.Label(progress_window, text="Importing sales data...").pack(pady=10)
+                progress_var = tk.DoubleVar()
+                progress_bar = ttk.Progressbar(progress_window,
+                                               variable=progress_var,
+                                               maximum=100,
+                                               mode='determinate')
+                progress_bar.pack(fill='x', padx=20, pady=10)
+                status_label = ttk.Label(progress_window, text="Reading file...")
+                status_label.pack(pady=10)
+
+                def update_progress(current, total, status=""):
+                    progress_var.set((current / total) * 100)
+                    if status:
+                        status_label.config(text=status)
+                    progress_window.update()
+
+                def import_task():
+                    try:
+                        result = self.system.import_csv(filename, mode=mode, progress_callback=update_progress)
+                        progress_window.destroy()
+                        self.import_status.config(
+                            text=result,
+                            foreground="green"
+                        )
+                        self.refresh_dropdowns()
+                    except Exception as e:
+                        progress_window.destroy()
+                        self.import_status.config(
+                            text=f"Error importing file: {str(e)}",
+                            foreground="red"
+                        )
+
+                # Start import in separate thread
+                import threading
+                thread = threading.Thread(target=import_task)
+                thread.daemon = True
+                thread.start()
+
+            except Exception as e:
+                self.import_status.config(
+                    text=f"Error importing file: {str(e)}",
+                    foreground="red"
+                )
+
+    def setup_landing_tab(self):
+        """Initialize the landing page tab with animated images"""
+        landing_frame = ttk.Frame(self.notebook)
+        self.notebook.add(landing_frame, text='Home')
+
+        # Title at the top
+        title_label = ttk.Label(
+            landing_frame,
+            text="Sales Targeting System",
+            font=('Helvetica', 24, 'bold')
+        )
+        title_label.pack(pady=20)
+
+        # Create container for images with fixed width
+        images_frame = ttk.Frame(landing_frame, width=300)
+        images_frame.pack(expand=True, fill='both', padx=20)
+
+        # Load images
+        try:
+            img_paths = [
+                "img/analze.png",  # Using your spelling from the directory listing
+                "img/contact.png",
+                "img/success.png"
+            ]
+
+            # Create image labels but initially hide them
+            image_labels = []
+            for path in img_paths:
+                img = Image.open(path)
+                # Images are already 300x200, no resize needed
+                photo = ImageTk.PhotoImage(img)
+
+                label = ttk.Label(images_frame, image=photo)
+                label.image = photo  # Keep a reference!
+                label.pack(pady=5)
+                label.pack_forget()  # Hide initially
+                image_labels.append(label)
+
+            # Function to show images with delay
+            def show_images():
+                # Show first image immediately
+                image_labels[0].pack(pady=5)
+
+                # Show second image after 400ms
+                landing_frame.after(400, lambda: image_labels[1].pack(pady=5))
+
+                # Show third image after 800ms
+                landing_frame.after(800, lambda: image_labels[2].pack(pady=5))
+
+            # Start the animation
+            landing_frame.after(100, show_images)
+
+        except Exception as e:
+            error_label = ttk.Label(
+                images_frame,
+                text=f"Error loading images: {str(e)}",
+                foreground='red'
+            )
+            error_label.pack(pady=20)
 
     def setup_comparison_tab(self):
         """Initialize the comparison system and create comparison interface"""
@@ -667,29 +863,10 @@ class SalesTargetingGUI:
                     foreground="red"
                 )
 
-    def import_csv(self):
-        filename = filedialog.askopenfilename(
-            filetypes=[("CSV Files", "*.csv")]
-        )
-        if filename:
-            try:
-                mode = self.import_mode.get()
-                if mode == 'replace':
-                    if not messagebox.askyesno("Confirm Replace",
-                                               "This will delete all existing sales data. Are you sure?"):
-                        return
-
-                result = self.system.import_csv(filename, mode=mode)
-                self.import_status.config(
-                    text=result,
-                    foreground="green"
-                )
-                self.refresh_dropdowns()
-            except Exception as e:
-                self.import_status.config(
-                    text=f"Error importing file: {str(e)}",
-                    foreground="red"
-                )
+    def on_brand_selected(self, event):
+        """Handle brand selection change"""
+        selected_brand = self.brand_var.get()
+        self.refresh_items(selected_brand if selected_brand else None)
 
     def setup_targeting_tab(self):
         targeting_frame = ttk.Frame(self.notebook)
@@ -705,11 +882,13 @@ class SalesTargetingGUI:
             'days': None
         }
 
-        # Brand combobox
         ttk.Label(criteria_frame, text="Brand:").grid(row=0, column=0, padx=5, pady=5)
         self.brand_var = tk.StringVar()
         self.brand_combo = ttk.Combobox(criteria_frame, textvariable=self.brand_var)
         self.brand_combo.grid(row=0, column=1, padx=5, pady=5)
+
+        # Add binding for brand selection
+        self.brand_combo.bind('<<ComboboxSelected>>', self.on_brand_selected)
 
         # Item combobox
         ttk.Label(criteria_frame, text="Item:").grid(row=1, column=0, padx=5, pady=5)
@@ -861,30 +1040,61 @@ class SalesTargetingGUI:
         self.refresh_dropdowns()
 
     def refresh_dropdowns(self):
+        """Refresh brand and item dropdowns"""
         try:
             with db_config.get_cursor() as cursor:
-                # Get unique brands
+                # Get unique brands (limited to major brands)
                 cursor.execute("""
                     SELECT DISTINCT brand 
                     FROM sales_history 
-                    WHERE brand IS NOT NULL AND brand != '' 
+                    WHERE brand IS NOT NULL 
+                    AND brand != '' 
+                    AND brand IN %s
                     ORDER BY brand
-                """)
+                """, (tuple(ComparisonSystem.WINE_BRANDS),))
                 brands = [row[0] for row in cursor.fetchall()]
                 self.brand_combo['values'] = [''] + brands
 
-                # Get unique items
-                cursor.execute("""
-                    SELECT DISTINCT item 
-                    FROM sales_history 
-                    WHERE item IS NOT NULL AND item != '' 
-                    ORDER BY item
-                """)
-                items = [row[0] for row in cursor.fetchall()]
-                self.item_combo['values'] = [''] + items
+                # Get items for all major brands initially
+                self.refresh_items()
 
         except Exception as e:
             messagebox.showerror("Error", f"Error refreshing lists: {str(e)}")
+
+    def refresh_items(self, selected_brand=None):
+        """Refresh item dropdown based on selected brand"""
+        try:
+            with db_config.get_cursor() as cursor:
+                if selected_brand:
+                    # Get items for selected brand
+                    cursor.execute("""
+                        SELECT DISTINCT item 
+                        FROM sales_history 
+                        WHERE brand = %s
+                        AND item IS NOT NULL 
+                        AND item != '' 
+                        ORDER BY item
+                    """, (selected_brand,))
+                else:
+                    # Get items for all major brands
+                    cursor.execute("""
+                        SELECT DISTINCT item 
+                        FROM sales_history 
+                        WHERE brand IN %s
+                        AND item IS NOT NULL 
+                        AND item != '' 
+                        ORDER BY item
+                    """, (tuple(ComparisonSystem.WINE_BRANDS),))
+
+                items = [row[0] for row in cursor.fetchall()]
+                self.item_combo['values'] = [''] + items
+
+                # Clear current selection if brand changed
+                if selected_brand:
+                    self.item_var.set('')
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Error refreshing item list: {str(e)}")
 
     def update_navigation(self):
         """Update navigation buttons and page information"""

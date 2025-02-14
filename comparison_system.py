@@ -4,6 +4,7 @@ from tkinter import ttk, messagebox
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib
+
 matplotlib.use('TkAgg')  # Force TkAgg backend
 from tkcalendar import DateEntry
 from datetime import datetime, timedelta
@@ -71,6 +72,87 @@ class ComparisonSystem:
 
             return df
 
+    def get_fiscal_ytd_dates(self):
+        """Calculate fiscal year-to-date date ranges for comparison"""
+        with db_config.get_cursor() as cursor:
+            cursor.execute("""
+                WITH CurrentFiscal AS (
+                    SELECT 
+                        CASE 
+                            WHEN EXTRACT(MONTH FROM CURRENT_DATE) <= 4 THEN 
+                                make_date(EXTRACT(YEAR FROM CURRENT_DATE)::int - 1, 5, 1)
+                            ELSE 
+                                make_date(EXTRACT(YEAR FROM CURRENT_DATE)::int, 5, 1)
+                        END as fiscal_start,
+                        CURRENT_DATE - interval '1 day' as current_end
+                )
+                SELECT
+                    fiscal_start as current_start,
+                    current_end,
+                    fiscal_start - interval '1 year' as previous_start,
+                    (fiscal_start - interval '1 year' + 
+                     (current_end - fiscal_start)) as previous_end
+                FROM CurrentFiscal
+            """)
+
+            return cursor.fetchone()
+
+    def get_fiscal_ytd_performance(self, start_date1, end_date1, start_date2, end_date2):
+        """Get fiscal year-to-date performance comparison"""
+        query = """
+            WITH PeriodSales AS (
+                SELECT 
+                    brand,
+                    item,
+                    SUM(CASE 
+                        WHEN date_sold BETWEEN %s AND %s THEN units_sold 
+                        ELSE 0 
+                    END)::numeric as prev_year,
+                    SUM(CASE 
+                        WHEN date_sold BETWEEN %s AND %s THEN units_sold 
+                        ELSE 0 
+                    END)::numeric as curr_year,
+                    COUNT(DISTINCT CASE 
+                        WHEN date_sold BETWEEN %s AND %s THEN customer_id 
+                    END) as prev_customers,
+                    COUNT(DISTINCT CASE 
+                        WHEN date_sold BETWEEN %s AND %s THEN customer_id 
+                    END) as curr_customers
+                FROM sales_history
+                GROUP BY brand, item
+            )
+            SELECT 
+                brand,
+                item,
+                prev_year,
+                curr_year,
+                prev_customers,
+                curr_customers,
+                CASE 
+                    WHEN prev_year = 0 THEN 100.0
+                    ELSE ROUND(((curr_year - prev_year) * 100.0 / NULLIF(prev_year, 0))::numeric, 1)
+                END::float as growth
+            FROM PeriodSales
+            WHERE prev_year > 0 OR curr_year > 0
+            ORDER BY brand, curr_year DESC
+        """
+
+        with db_config.get_cursor() as cursor:
+            cursor.execute(query, (
+                start_date1, end_date1, start_date2, end_date2,
+                start_date1, end_date1, start_date2, end_date2
+            ))
+            columns = [desc[0] for desc in cursor.description]
+            data = cursor.fetchall()
+
+            df = pd.DataFrame(data, columns=columns)
+            # Ensure numeric types
+            numeric_cols = ['prev_year', 'curr_year', 'prev_customers',
+                            'curr_customers', 'growth']
+            for col in numeric_cols:
+                df[col] = pd.to_numeric(df[col])
+
+            return df
 
     def analyze_brand_performance(self, df):
         """Analyze performance metrics for each brand"""
@@ -87,12 +169,21 @@ class ComparisonSystem:
                 total_curr = brand_data['curr_year'].sum()
                 growth = ((total_curr - total_prev) / total_prev * 100) if total_prev > 0 else 100
 
+                # Add customer metrics if available
+                customer_metrics = {}
+                if 'prev_customers' in brand_data.columns:
+                    customer_metrics = {
+                        'prev_customers': brand_data['prev_customers'].sum(),
+                        'curr_customers': brand_data['curr_customers'].sum()
+                    }
+
                 top_products = brand_data.nlargest(15, 'curr_year')
                 results[brand] = {
                     'total_prev': total_prev,
                     'total_curr': total_curr,
                     'growth': growth,
-                    'products': top_products.to_dict('records')
+                    'products': top_products.to_dict('records'),
+                    **customer_metrics
                 }
 
         return results
@@ -100,187 +191,104 @@ class ComparisonSystem:
 
 class PromotionManager:
     def __init__(self):
-        self.current_year_promos = {}
-        self.previous_year_promos = {}
+        self._cache = {}
+        self._last_cache_update = None
+        self._cache_duration = timedelta(hours=1)  # Cache for 1 hour
+        self.logger = get_logger('comparison_system')
 
-    def add_promotion(self, year, period_number, start_date, end_date):
-        """Add a promotion period to the manager"""
-        promo = PromotionPeriod(period_number, start_date, end_date)
-        if year == datetime.now().year:
-            self.current_year_promos[period_number] = promo
-        else:
-            self.previous_year_promos[period_number] = promo
+    def _needs_cache_refresh(self):
+        """Check if cache needs to be refreshed"""
+        return (self._last_cache_update is None or
+                datetime.now() - self._last_cache_update > self._cache_duration)
 
-    def get_current_promo_comparison_dates(self):
-        """Get the date ranges for comparing the current promotion period"""
-        today = datetime.now().date()
-
-        # Find current promotion period
-        current_period = None
-        for period in self.current_year_promos.values():
-            if period.start_date <= today <= period.end_date:
-                current_period = period
-                break
-
-        if not current_period:
-            raise ValueError("No active promotion period found for today's date")
-
-        days_elapsed = (today - current_period.start_date).days
-        prev_period = self.previous_year_promos.get(current_period.period_number)
-
-        if not prev_period:
-            raise ValueError(f"No matching period {current_period.period_number} found for previous year")
-
-        return (
-            current_period.start_date,
-            current_period.start_date + timedelta(days=days_elapsed),
-            prev_period.start_date,
-            prev_period.start_date + timedelta(days=days_elapsed)
-        )
-
-
-class PromotionPeriod:
-    def __init__(self, period_number, start_date, end_date):
-        self.period_number = period_number
-        self.start_date = start_date
-        self.end_date = end_date
-
-
-class PromoSetupDialog:
-    def __init__(self, parent):
-        self.dialog = tk.Toplevel(parent)
-        self.dialog.title("Promotion Period Setup")
-        self.dialog.geometry("800x600")
-        self.dialog.grab_set()  # Make dialog modal
-
-        # Center dialog on parent window
-        self.dialog.transient(parent)
-
-        # Add scrollbar for many periods
-        self.setup_scrollable_area()
-
-        # Create period entries
-        self.period_entries = {}
-        self.setup_period_entries()
-
-        # Create control buttons
-        self.setup_controls()
-
-        # Load existing periods
-        self.load_existing_periods()
-
-    def setup_scrollable_area(self):
-        """Create scrollable canvas for period entries"""
-        self.canvas = tk.Canvas(self.dialog)
-        self.scrollbar = ttk.Scrollbar(self.dialog, orient="vertical", command=self.canvas.yview)
-        self.content_frame = ttk.Frame(self.canvas)
-        self.canvas_window = self.canvas.create_window((0, 0), window=self.content_frame, anchor="nw")
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
-        self.scrollbar.pack(side="right", fill="y")
-        self.canvas.pack(side="left", fill="both", expand=True)
-        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
-        self.content_frame.bind("<Configure>", self._on_frame_configure)
-        self.canvas.bind("<Configure>", self._on_canvas_configure)
-
-    def setup_period_entries(self):
-        """Create entry fields for promotion periods"""
-        current_year = datetime.now().year
-        years = [current_year - 1, current_year, current_year + 1]
-
-        for year in years:
-            year_frame = ttk.LabelFrame(self.content_frame, text=f"Promotion Periods {year}")
-            year_frame.pack(padx=10, pady=5, fill='x')
-
-            ttk.Label(year_frame, text="Period", width=10).grid(row=0, column=0, padx=5, pady=5)
-            ttk.Label(year_frame, text="Start Date", width=15).grid(row=0, column=1, padx=5, pady=5)
-            ttk.Label(year_frame, text="End Date", width=15).grid(row=0, column=2, padx=5, pady=5)
-            ttk.Label(year_frame, text="Description", width=30).grid(row=0, column=3, padx=5, pady=5)
-
-            for period in range(1, 18):
-                ttk.Label(year_frame, text=f"Period {period}").grid(row=period, column=0, padx=5, pady=2)
-                start_date = DateEntry(year_frame, width=12, date_pattern='yyyy-mm-dd')
-                start_date.grid(row=period, column=1, padx=5, pady=2)
-                end_date = DateEntry(year_frame, width=12, date_pattern='yyyy-mm-dd')
-                end_date.grid(row=period, column=2, padx=5, pady=2)
-                description = ttk.Entry(year_frame, width=30)
-                description.grid(row=period, column=3, padx=5, pady=2)
-
-                self.period_entries[f"{year}_p{period}"] = {
-                    'start': start_date,
-                    'end': end_date,
-                    'description': description
-                }
-
-    def setup_controls(self):
-        """Setup control buttons"""
-        button_frame = ttk.Frame(self.dialog)
-        button_frame.pack(pady=10, fill='x')
-        ttk.Button(button_frame, text="Save Periods", command=self.save_periods).pack(side='left', padx=5)
-        ttk.Button(button_frame, text="Close", command=self.dialog.destroy).pack(side='left', padx=5)
-
-    def save_periods(self):
-        """Save promotion periods to database"""
+    def get_current_period_info(self):
+        """Get current period information with caching"""
         try:
-            with db_config.get_cursor() as cursor:
-                # Clear existing periods
-                cursor.execute("TRUNCATE promotion_periods")
+            cache_key = 'current_period'
+            if cache_key not in self._cache or self._needs_cache_refresh():
+                self.logger.debug("Fetching current period info from database")
+                with db_config.get_cursor() as cursor:
+                    cursor.execute("""
+                        WITH CurrentPeriod AS (
+                            SELECT 
+                                year,
+                                period_number,
+                                description,
+                                start_date,
+                                end_date,
+                                CURRENT_DATE - start_date + 1 as days_elapsed,
+                                end_date - start_date + 1 as total_days
+                            FROM promotion_periods
+                            WHERE start_date <= CURRENT_DATE 
+                            AND end_date >= CURRENT_DATE
+                            AND start_date IS NOT NULL
+                            ORDER BY year DESC, period_number DESC
+                            LIMIT 1
+                        )
+                        SELECT 
+                            year,
+                            period_number,
+                            description,
+                            start_date,
+                            end_date,
+                            days_elapsed,
+                            total_days,
+                            CAST((days_elapsed::float / total_days * 100) AS numeric(10,1)) as progress_percent
+                        FROM CurrentPeriod
+                    """)
+                    result = cursor.fetchone()
 
-                # Insert new periods
-                for key, entries in self.period_entries.items():
-                    year = int(key.split('_')[0])
-                    period = int(key.split('_p')[1])
+                    if not result:
+                        raise ValueError("No active promotion period found for current date")
 
-                    start_date = entries['start'].get_date()
-                    end_date = entries['end'].get_date()
-                    description = entries['description'].get()
+                    self._cache[cache_key] = {
+                        'year': result[0],
+                        'period_number': result[1],
+                        'description': result[2],
+                        'start_date': result[3],
+                        'end_date': result[4],
+                        'days_elapsed': result[5],
+                        'total_days': result[6],
+                        'progress_percent': result[7]
+                    }
+                    self._last_cache_update = datetime.now()
 
-                    # Only insert if dates are set
-                    if start_date and end_date:
-                        cursor.execute("""
-                            INSERT INTO promotion_periods 
-                            (year, period_number, start_date, end_date, description)
-                            VALUES (%s, %s, %s, %s, %s)
-                        """, (year, period, start_date, end_date, description))
-
-            messagebox.showinfo("Success", "Promotion periods saved successfully!")
-
+            return self._cache[cache_key]
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to save promotion periods: {str(e)}")
+            self.logger.error(f"Error getting current period info: {str(e)}")
+            raise ValueError(f"Could not determine current promotion period: {str(e)}")
 
-    def load_existing_periods(self):
-        """Load existing promotion periods from database"""
-        try:
-            with db_config.get_cursor() as cursor:
-                cursor.execute("""
-                    SELECT year, period_number, start_date, end_date, description 
-                    FROM promotion_periods 
-                    ORDER BY year, period_number
-                """)
+    def get_comparison_dates(self):
+        """Get comparison dates for current period vs last year"""
+        current_period = self.get_current_period_info()
 
-                for row in cursor.fetchall():
-                    year, period, start_date, end_date, description = row
-                    key = f"{year}_p{period}"
+        with db_config.get_cursor() as cursor:
+            # Find matching period from last year
+            cursor.execute("""
+                SELECT start_date, end_date
+                FROM promotion_periods
+                WHERE year = %s 
+                AND period_number = %s
+                AND start_date IS NOT NULL
+            """, (current_period['year'] - 1, current_period['period_number']))
 
-                    if key in self.period_entries:
-                        self.period_entries[key]['start'].set_date(start_date)
-                        self.period_entries[key]['end'].set_date(end_date)
-                        if description:
-                            self.period_entries[key]['description'].insert(0, description)
+            last_year = cursor.fetchone()
+            if not last_year:
+                raise ValueError(
+                    f"No matching period found for last year (Period {current_period['period_number']})")
 
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to load promotion periods: {str(e)}")
+            last_start, last_end = last_year
 
-    def _on_frame_configure(self, event=None):
-        """Reset the scroll region to encompass the inner frame"""
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+            # Calculate the same number of elapsed days for both periods
+            days_elapsed = current_period['days_elapsed']
 
-    def _on_canvas_configure(self, event):
-        """When canvas is resized, resize the inner frame to match"""
-        self.canvas.itemconfig(self.canvas_window, width=event.width)
-
-    def _on_mousewheel(self, event):
-        """Handle mousewheel scrolling"""
-        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            return {
+                'current_start': current_period['start_date'],
+                'current_end': min(current_period['start_date'] + timedelta(days=days_elapsed - 1),
+                                   datetime.now().date() - timedelta(days=1)),
+                'previous_start': last_start,
+                'previous_end': last_start + timedelta(days=days_elapsed - 1)
+            }
 
 
 class ComparisonTab:
@@ -303,43 +311,142 @@ class ComparisonTab:
         self.fixed_container = ttk.Frame(self.comparison_frame)
         self.fixed_container.pack(fill='x', expand=False)
 
+        # Add period info frame at the top
+        self.period_info_frame = ttk.Frame(self.fixed_container)
+        self.period_info_frame.pack(fill='x', padx=10, pady=5)
+
+        # Period info with tooltip
+        info_frame = ttk.Frame(self.period_info_frame)
+        info_frame.pack(side='left', padx=5)
+
+        self.period_label = ttk.Label(info_frame, font=('TkDefaultFont', 10, 'bold'))
+        self.period_label.pack(side='top', anchor='w')
+
+        # Progress bar frame
+        progress_frame = ttk.Frame(self.period_info_frame)
+        progress_frame.pack(side='left', fill='x', expand=True, padx=5)
+
+        self.progress_label = ttk.Label(progress_frame)
+        self.progress_label.pack(side='top', anchor='w')
+
+        # Progress bar (using ttk.Progressbar)
+        self.progress_bar = ttk.Progressbar(progress_frame, mode='determinate', length=200)
+        self.progress_bar.pack(side='top', fill='x', pady=2)
+
         # Setup the scrollable area
         self.setup_scrollable_area()
 
-        # Load saved promotion periods
-        self.load_promotion_periods()
+        # Add tab selection binding
+        self.notebook.bind('<<NotebookTabChanged>>', self.on_tab_changed)
 
         # Initialize the UI
         self.setup_ui()
 
+    def show_fiscal_performance_summary(self, df):
+        """Show performance summary with fiscal year context"""
+        try:
+            # Clear existing content
+            for widget in self.brand_content_frame.winfo_children():
+                widget.destroy()
 
+            # Add fiscal year indicator
+            fiscal_year = datetime.now().year if datetime.now().month > 4 else datetime.now().year - 1
+            fiscal_label = ttk.Label(
+                self.brand_content_frame,
+                text=f"Fiscal Year {fiscal_year}-{fiscal_year + 1} (May 1 - Apr 30)",
+                font=('TkDefaultFont', 10, 'bold')
+            )
+            fiscal_label.pack(pady=10)
 
-    def setup_scrollable_area(self):
-        """Setup scrollable canvas for brand content"""
-        # Create canvas and scrollbar
-        self.canvas_container = ttk.Frame(self.comparison_frame)
-        self.canvas_container.pack(fill='both', expand=True)
+            # Show the regular performance summary with the fiscal data
+            self.show_performance_summary(df)
 
-        # Create canvas with scrollbar
-        self.canvas = tk.Canvas(self.canvas_container)
-        self.scrollbar = ttk.Scrollbar(self.canvas_container, orient="vertical", command=self.canvas.yview)
+        except Exception as e:
+            self.logger.error(f"Error showing fiscal summary: {str(e)}")
+            messagebox.showerror("Error", f"Error showing fiscal summary: {str(e)}")
 
-        # Create frame inside canvas for content
-        self.scrollable_frame = ttk.Frame(self.canvas)
-        self.canvas_window = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+    def set_fiscal_ytd(self):
+        """Set dates for fiscal year-to-date comparison"""
+        try:
+            dates = self.comparison_system.get_fiscal_ytd_dates()
+            if not dates:
+                raise ValueError("Could not determine fiscal year dates")
 
-        # Configure canvas
-        self.scrollable_frame.bind("<Configure>", self._on_frame_configure)
-        self.canvas.bind("<Configure>", self._on_canvas_configure)
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+            current_start, current_end, prev_start, prev_end = dates
 
-        # Pack scrollbar and canvas
-        self.scrollbar.pack(side="right", fill="y")
-        self.canvas.pack(side="left", fill="both", expand=True)
+            # Set the date pickers
+            self.start_date2.set_date(current_start)
+            self.end_date2.set_date(current_end)
+            self.start_date1.set_date(prev_start)
+            self.end_date1.set_date(prev_end)
 
-        # Bind mouse wheel events
-        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+            # Get fiscal year data
+            start1 = prev_start.strftime('%Y-%m-%d')
+            end1 = prev_end.strftime('%Y-%m-%d')
+            start2 = current_start.strftime('%Y-%m-%d')
+            end2 = current_end.strftime('%Y-%m-%d')
 
+            # Get fiscal performance data
+            df = self.comparison_system.get_fiscal_ytd_performance(
+                start1, end1, start2, end2
+            )
+
+            # Store results and update display
+            results = self.comparison_system.analyze_brand_performance(df)
+            self.last_results = results
+
+            # Show performance summary with fiscal year context
+            self.show_fiscal_performance_summary(df)
+
+        except Exception as e:
+            self.logger.error(f"Error setting fiscal YTD dates: {str(e)}")
+            messagebox.showerror("Error",
+                                 "Could not set fiscal YTD dates. Please check system configuration.")
+
+    def set_current_promo(self):
+        """Set date ranges to compare current promotion period"""
+        try:
+            # Get current period info first
+            period_info = self.promo_manager.get_current_period_info()
+
+            # Calculate last year's dates
+            with db_config.get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT start_date, end_date
+                    FROM promotion_periods
+                    WHERE year = %s 
+                    AND period_number = %s
+                    AND start_date IS NOT NULL
+                """, (period_info['year'] - 1, period_info['period_number']))
+
+                last_year = cursor.fetchone()
+                if not last_year:
+                    raise ValueError(f"No matching period found for last year (Period {period_info['period_number']})")
+
+                last_start, last_end = last_year
+
+                # Calculate days elapsed
+                days_elapsed = period_info['days_elapsed']
+
+                # Set the current end date to yesterday if we're in the period
+                current_end = min(
+                    period_info['start_date'] + timedelta(days=days_elapsed - 1),
+                    datetime.now().date() - timedelta(days=1)
+                )
+
+                # Set the dates
+                self.start_date1.set_date(last_start)
+                self.end_date1.set_date(last_start + timedelta(days=days_elapsed - 1))
+                self.start_date2.set_date(period_info['start_date'])
+                self.end_date2.set_date(current_end)
+
+                # Trigger comparison
+                self.compare_periods()
+
+        except Exception as e:
+            self.logger.error(f"Error setting promotion dates: {str(e)}")
+            messagebox.showerror("Error",
+                                 "Could not set promotion dates. Please check promotion period configuration.")
 
     def setup_ui(self):
         """Initialize all UI elements"""
@@ -355,7 +462,7 @@ class ComparisonTab:
             ("Last Week", self.set_last_week),
             ("This Week", self.set_this_week),
             ("Current Promotion", self.set_current_promo),
-            ("Setup Promotions", self.show_promo_setup)
+            ("Fiscal YTD", self.set_fiscal_ytd)
         ]
 
         for text, command in buttons:
@@ -426,6 +533,55 @@ class ComparisonTab:
             )
             btn.pack(side='left', padx=2, pady=2)
 
+    def setup_scrollable_area(self):
+        """Setup scrollable canvas for brand content"""
+        # Create canvas and scrollbar
+        self.canvas_container = ttk.Frame(self.comparison_frame)
+        self.canvas_container.pack(fill='both', expand=True)
+
+        # Create canvas with scrollbar
+        self.canvas = tk.Canvas(self.canvas_container)
+        self.scrollbar = ttk.Scrollbar(self.canvas_container, orient="vertical", command=self.canvas.yview)
+
+        # Create frame inside canvas for content
+        self.scrollable_frame = ttk.Frame(self.canvas)
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+
+        # Configure canvas
+        self.scrollable_frame.bind("<Configure>", self._on_frame_configure)
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        # Pack scrollbar and canvas
+        self.scrollbar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+
+        # Bind mouse wheel events
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+
+    def _on_frame_configure(self, event=None):
+        """Reset the scroll region to encompass the inner frame"""
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _on_canvas_configure(self, event):
+        """When canvas is resized, resize the inner frame to match"""
+        self.canvas.itemconfig(self.canvas_window, width=event.width)
+
+    def _on_mousewheel(self, event):
+        """Handle mousewheel scrolling"""
+        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    def on_tab_changed(self, event):
+        """Handle tab selection"""
+        try:
+            current = self.notebook.select()
+            if self.notebook.index(current) == self.notebook.index(self.comparison_frame):
+                self.logger.debug("Brand Analysis tab selected")
+                self.update_period_info()
+
+        except Exception as e:
+            self.logger.error(f"Error in tab changed handler: {str(e)}")
+            messagebox.showerror("Error", f"Error loading comparison tab: {str(e)}")
 
     def show_brand_content(self, brand):
         """Show content for selected brand"""
@@ -478,6 +634,236 @@ class ComparisonTab:
             print(traceback.format_exc())
             messagebox.showerror("Error", f"Error comparing periods: {str(e)}")
 
+    def update_period_info(self):
+        """Update the period info display"""
+        try:
+            period_info = self.promo_manager.get_current_period_info()
+
+            self.period_label.config(
+                text=f"Current Period: {period_info['description']} "
+                     f"({period_info['start_date'].strftime('%b %d')} - "
+                     f"{period_info['end_date'].strftime('%b %d')})"
+            )
+
+            self.progress_label.config(
+                text=f"Progress: Day {period_info['days_elapsed']} of "
+                     f"{period_info['total_days']} ({period_info['progress_percent']}%)"
+            )
+
+            # Update progress bar
+            self.progress_bar['value'] = period_info['progress_percent']
+
+        except Exception as e:
+            self.logger.error(f"Error updating period info: {str(e)}")
+            self.period_label.config(text="Error loading period info")
+            self.progress_label.config(text="")
+            self.progress_bar['value'] = 0
+
+    def update_brand_tab(self, brand, data):
+        """Update visualization and table for a brand tab"""
+        # Clear existing content
+        for widget in self.brand_content_frame.winfo_children():
+            widget.destroy()
+
+        if not data['products']:
+            return
+
+        # Create chart frame
+        chart_frame = ttk.Frame(self.brand_content_frame)
+        chart_frame.pack(fill='both', expand=True)
+
+        # Create table frame
+        table_frame = ttk.Frame(self.brand_content_frame)
+        table_frame.pack(fill='both', expand=True)
+
+        # Create bar chart
+        fig = Figure(figsize=(12, 6))
+        ax = fig.add_subplot(111)
+
+        products = data['products'][:10]  # Top 10 products
+        x = range(len(products))
+        width = 0.35
+
+        # Add padding to y-axis limits
+        max_value = max(max(p['prev_year'] for p in products),
+                        max(p['curr_year'] for p in products))
+        ax.set_ylim(0, max_value * 1.2)
+
+        # Previous year bars
+        prev_bars = ax.bar([i - width / 2 for i in x],
+                           [p['prev_year'] for p in products],
+                           width,
+                           label='Previous Year',
+                           color='#66cc66')
+
+        # Current year bars
+        curr_bars = ax.bar([i + width / 2 for i in x],
+                           [p['curr_year'] for p in products],
+                           width,
+                           label='Current Year')
+
+        # Color current year bars based on performance
+        for i, bar in enumerate(curr_bars):
+            bar.set_color(self.get_bar_color(
+                products[i]['prev_year'],
+                products[i]['curr_year']
+            ))
+
+        # Customize chart
+        ax.set_ylabel('Units Sold')
+        ax.set_title(f'{brand} Performance Analysis')
+        ax.set_xticks(x)
+        ax.set_xticklabels([p['item'] for p in products], rotation=45, ha='right')
+        ax.legend()
+
+        # Add growth labels
+        for i, product in enumerate(products):
+            growth = product['growth']
+            max_height = max(product['prev_year'], product['curr_year'])
+            ax.text(i, max_height + (max_value * 0.05),
+                    f"{growth:+.1f}%",
+                    ha='center', va='bottom')
+
+        # Adjust layout
+        fig.tight_layout()
+
+        # Add chart to frame
+        canvas = FigureCanvasTkAgg(fig, chart_frame)
+        canvas.draw()
+        canvas_widget = canvas.get_tk_widget()
+        canvas_widget.pack(fill='both', expand=True)
+
+        # Create table
+        tree = ttk.Treeview(
+            table_frame,
+            columns=('Product', 'Prev', 'Curr', 'Growth'),
+            show='headings',
+            height=15
+        )
+
+        # Setup headings
+        tree.heading('Product', text='Product')
+        tree.heading('Prev', text='Previous Year')
+        tree.heading('Curr', text='Current Year')
+        tree.heading('Growth', text='Growth %')
+
+        # Configure columns
+        tree.column('Product', width=200)
+        tree.column('Prev', width=100)
+        tree.column('Curr', width=100)
+        tree.column('Growth', width=100)
+
+        # Add scrollbar
+        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        # Pack elements
+        tree.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+
+        # Add customer metrics if available
+        if 'prev_customers' in data:
+            customer_frame = ttk.Frame(self.brand_content_frame)
+            customer_frame.pack(fill='x', pady=5)
+
+            customer_text = (
+                f"Customer Base: {data['curr_customers']} "
+                f"(Previous: {data['prev_customers']})"
+            )
+            ttk.Label(customer_frame, text=customer_text).pack()
+
+        # Populate table
+        for product in data['products']:
+            growth = product['growth']
+            tree.insert('', 'end', values=(
+                product['item'],
+                f"{product['prev_year']:.1f}",
+                f"{product['curr_year']:.1f}",
+                f"{growth:+.1f}%"
+            ))
+
+        self.brand_tabs[brand] = {
+            'frame': self.brand_content_frame,
+            'chart_frame': chart_frame,
+            'table_frame': table_frame,
+            'tree': tree
+        }
+
+    def get_bar_color(self, prev_value, curr_value):
+        """Determine bar color based on performance rules"""
+        if curr_value == 0:
+            return '#ff9999'  # Light red for discontinued
+
+        if prev_value == 0:
+            return '#ffcc00'  # Yellow for new products
+
+        growth = ((curr_value - prev_value) / prev_value * 100) if prev_value > 0 else 100
+
+        if growth < 0:
+            return '#ff9999'  # Pink for decline
+        elif growth <= 10:
+            return '#3366cc'  # Blue for 0-10% growth
+        else:
+            return '#ffcc00'  # Yellow for >10% growth
+
+    def set_last_week(self):
+        """Set dates for last week and its year-ago comparison"""
+        with db_config.get_cursor() as cursor:
+            cursor.execute("""
+                WITH dates AS (
+                    SELECT 
+                        (date_trunc('week', CURRENT_DATE) - interval '7 days')::date as last_monday,
+                        (date_trunc('week', CURRENT_DATE) - interval '1 day')::date as last_sunday,
+                        date_part('week', CURRENT_DATE - interval '7 days') as week_num,
+                        extract(year from CURRENT_DATE - interval '1 year') as last_year
+                )
+                SELECT 
+                    last_monday,
+                    last_sunday,
+                    (date_trunc('year', make_date(last_year::int, 1, 1)) + 
+                     ((week_num - 1) * interval '7 days'))::date as prev_monday,
+                    (date_trunc('year', make_date(last_year::int, 1, 1)) + 
+                     ((week_num - 1) * interval '7 days') + interval '6 days')::date as prev_sunday
+                FROM dates
+            """)
+
+            last_monday, last_sunday, prev_monday, prev_sunday = cursor.fetchone()
+
+            # Set the date pickers
+            self.start_date2.set_date(last_monday)
+            self.end_date2.set_date(last_sunday)
+            self.start_date1.set_date(prev_monday)
+            self.end_date1.set_date(prev_sunday)
+
+    def set_this_week(self):
+        """Set dates for this week (through yesterday) and its year-ago comparison"""
+        with db_config.get_cursor() as cursor:
+            cursor.execute("""
+                WITH dates AS (
+                    SELECT 
+                        date_trunc('week', CURRENT_DATE)::date as current_monday,
+                        CURRENT_DATE - interval '1 day' as yesterday,
+                        date_part('week', CURRENT_DATE) as week_num,
+                        extract(year from CURRENT_DATE - interval '1 year') as last_year
+                )
+                SELECT 
+                    current_monday,
+                    yesterday,
+                    (date_trunc('year', make_date(last_year::int, 1, 1)) +
+                     ((week_num - 1) * interval '7 days'))::date as prev_monday,
+                    (date_trunc('year', make_date(last_year::int, 1, 1)) +
+                     ((week_num - 1) * interval '7 days') +
+                     (extract(day from yesterday - current_monday) * interval '1 day'))::date as prev_end
+                FROM dates
+            """)
+
+            current_monday, yesterday, prev_monday, prev_end = cursor.fetchone()
+
+            # Set the date pickers
+            self.start_date2.set_date(current_monday)
+            self.end_date2.set_date(yesterday)
+            self.start_date1.set_date(prev_monday)
+            self.end_date1.set_date(prev_end)
 
     def show_performance_summary(self, df):
         """Show top and bottom performers across major brands"""
@@ -495,6 +881,7 @@ class ComparisonTab:
             summary_frame = ttk.LabelFrame(self.brand_content_frame, text="Brand Performance Summary")
             summary_frame.pack(fill='x', padx=5, pady=5)
 
+            # Calculate brand totals
             # Calculate brand totals
             brand_totals = {}
             for brand in self.comparison_system.WINE_BRANDS:
@@ -552,7 +939,7 @@ class ComparisonTab:
             # Filter and sort data for top/bottom performers
             self.logger.debug("Calculating top and bottom performers")
 
-            # Create a copy instead of a view and ensure numeric types
+            # Create a copy and ensure numeric types
             major_brands_df = df[df['brand'].isin(self.comparison_system.WINE_BRANDS)].copy()
             if major_brands_df.empty:
                 ttk.Label(self.brand_content_frame,
@@ -590,6 +977,22 @@ class ComparisonTab:
             self.logger.debug("Creating performance charts")
             self.create_chart(top_frame, top_products, is_top=True)
             self.create_chart(bottom_frame, bottom_products, is_top=False)
+
+            # Add customer metrics if available
+            if 'prev_customers' in df.columns:
+                metrics_frame = ttk.LabelFrame(self.brand_content_frame, text="Customer Metrics")
+                metrics_frame.pack(fill='x', padx=5, pady=5)
+
+                total_prev_customers = df['prev_customers'].sum()
+                total_curr_customers = df['curr_customers'].sum()
+                customer_growth = ((total_curr_customers - total_prev_customers) / total_prev_customers * 100
+                                   if total_prev_customers > 0 else 0)
+
+                metrics_text = (
+                    f"Total Active Customers: {total_curr_customers:,} "
+                    f"(Previous: {total_prev_customers:,}, Change: {customer_growth:+.1f}%)"
+                )
+                ttk.Label(metrics_frame, text=metrics_text).pack(pady=5)
 
             # Add explanatory text
             ttk.Label(self.brand_content_frame,
@@ -655,325 +1058,3 @@ class ComparisonTab:
         except Exception as e:
             self.logger.error(f"Error creating chart: {str(e)}", exc_info=True)
             raise
-
-
-    def update_brand_tab(self, brand, data):
-        """Update visualization and table for a brand tab"""
-        # Clear existing content
-        for widget in self.brand_content_frame.winfo_children():
-            widget.destroy()
-
-        if not data['products']:
-            return
-
-        # Create chart frame
-        chart_frame = ttk.Frame(self.brand_content_frame)
-        chart_frame.pack(fill='both', expand=True)
-
-        # Create table frame
-        table_frame = ttk.Frame(self.brand_content_frame)
-        table_frame.pack(fill='both', expand=True)
-
-        # Create bar chart
-        fig = Figure(figsize=(12, 6))
-        ax = fig.add_subplot(111)
-
-        products = data['products'][:10]  # Top 10 products
-        x = range(len(products))
-        width = 0.35
-
-        # Add padding to y-axis limits
-        max_value = max(max(p['prev_year'] for p in products),
-                        max(p['curr_year'] for p in products))
-        ax.set_ylim(0, max_value * 1.2)
-
-        # Previous year bars
-        prev_bars = ax.bar([i - width / 2 for i in x],
-                           [p['prev_year'] for p in products],
-                           width,
-                           label='Previous Year',
-                           color='#66cc66')
-
-        # Current year bars
-        curr_bars = ax.bar([i + width / 2 for i in x],
-                           [p['curr_year'] for p in products],
-                           width,
-                           label='Current Year')
-
-        # Color current year bars
-        for i, bar in enumerate(curr_bars):
-            bar.set_color(self.get_bar_color(
-                products[i]['prev_year'],
-                products[i]['curr_year']
-            ))
-
-        # Customize chart
-        ax.set_ylabel('Units Sold')
-        ax.set_title(f'{brand} Performance Analysis')
-        ax.set_xticks(x)
-        ax.set_xticklabels([p['item'] for p in products], rotation=45, ha='right')
-        ax.legend()
-
-        # Add growth labels
-        for i, product in enumerate(products):
-            growth = product['growth']
-            max_height = max(product['prev_year'], product['curr_year'])
-            ax.text(i, max_height + (max_value * 0.05),
-                    f"{growth:+.1f}%",
-                    ha='center', va='bottom')
-
-        # Adjust layout
-        fig.tight_layout()
-
-        # Add chart to frame
-        canvas = FigureCanvasTkAgg(fig, chart_frame)
-        canvas.draw()
-        canvas_widget = canvas.get_tk_widget()
-        canvas_widget.pack(fill='both', expand=True)
-
-        # Create table
-        tree = ttk.Treeview(
-            table_frame,
-            columns=('Product', 'Prev', 'Curr', 'Growth'),
-            show='headings',
-            height=15
-        )
-
-        # Setup headings
-        tree.heading('Product', text='Product')
-        tree.heading('Prev', text='Previous Year')
-        tree.heading('Curr', text='Current Year')
-        tree.heading('Growth', text='Growth %')
-
-        # Configure columns
-        tree.column('Product', width=200)
-        tree.column('Prev', width=100)
-        tree.column('Curr', width=100)
-        tree.column('Growth', width=100)
-
-        # Add scrollbar
-        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
-        tree.configure(yscrollcommand=scrollbar.set)
-
-        # Pack elements
-        tree.pack(side='left', fill='both', expand=True)
-        scrollbar.pack(side='right', fill='y')
-
-        # Populate table
-        for product in data['products']:
-            growth = product['growth']
-            tree.insert('', 'end', values=(
-                product['item'],
-                f"{product['prev_year']:.1f}",
-                f"{product['curr_year']:.1f}",
-                f"{growth:+.1f}%"
-            ))
-
-        self.brand_tabs[brand] = {
-            'frame': self.brand_content_frame,
-            'chart_frame': chart_frame,
-            'table_frame': table_frame,
-            'tree': tree
-        }
-
-    def get_bar_color(self, prev_value, curr_value):
-        """Determine bar color based on performance rules"""
-        if curr_value == 0:
-            return '#ff9999'  # Light red for discontinued
-
-        if prev_value == 0:
-            return '#ffcc00'  # Yellow for new products
-
-        growth = ((curr_value - prev_value) / prev_value * 100) if prev_value > 0 else 100
-
-        if growth < 0:
-            return '#ff9999'  # Pink for decline
-        elif growth <= 10:
-            return '#3366cc'  # Blue for 0-10% growth
-        else:
-            return '#ffcc00'  # Yellow for >10% growth
-
-    def load_promotion_periods(self):
-        """Load saved promotion periods from database"""
-        try:
-            with db_config.get_cursor() as cursor:
-                # Check if promotions table exists
-                cursor.execute("""
-                    SELECT EXISTS (
-                        SELECT FROM pg_tables
-                        WHERE schemaname = 'public' 
-                        AND tablename = 'promotion_periods'
-                    )
-                """)
-
-                table_exists = cursor.fetchone()[0]
-
-                if not table_exists:
-                    cursor.execute("""
-                        CREATE TABLE promotion_periods (
-                            id SERIAL PRIMARY KEY,
-                            year INTEGER,
-                            period_number INTEGER,
-                            start_date DATE,
-                            end_date DATE,
-                            description TEXT,
-                            UNIQUE(year, period_number))
-                    """)
-
-                # Load all promotion periods
-                cursor.execute("""
-                    SELECT year, period_number, start_date, end_date 
-                    FROM promotion_periods 
-                    ORDER BY year DESC, period_number
-                """)
-
-                for row in cursor.fetchall():
-                    year, period, start_date, end_date = row
-                    self.promo_manager.add_promotion(
-                        year,
-                        period,
-                        start_date,
-                        end_date
-                    )
-
-        except Exception as e:
-            messagebox.showwarning(
-                "Warning",
-                f"Could not load promotion periods: {str(e)}\nPlease use Setup Promotions to configure."
-            )
-
-    def get_week_dates(self, for_current_week=True):
-        """Get date range for current or previous week (Monday to Sunday)"""
-        with db_config.get_cursor() as cursor:
-            if for_current_week:
-                cursor.execute("""
-                    SELECT 
-                        date_trunc('week', CURRENT_DATE)::date as monday,
-                        (date_trunc('week', CURRENT_DATE) + interval '6 days')::date as sunday
-                """)
-            else:
-                cursor.execute("""
-                    SELECT 
-                        (date_trunc('week', CURRENT_DATE) - interval '7 days')::date as monday,
-                        (date_trunc('week', CURRENT_DATE) - interval '1 day')::date as sunday
-                """)
-
-            return cursor.fetchone()
-
-    def set_last_week(self):
-        """Set dates for last week and its year-ago comparison"""
-        with db_config.get_cursor() as cursor:
-            cursor.execute("""
-                WITH dates AS (
-                    SELECT 
-                        (date_trunc('week', CURRENT_DATE) - interval '7 days')::date as last_monday,
-                        (date_trunc('week', CURRENT_DATE) - interval '1 day')::date as last_sunday,
-                        date_part('week', CURRENT_DATE - interval '7 days') as week_num,
-                        extract(year from CURRENT_DATE - interval '1 year') as last_year
-                )
-                SELECT 
-                    last_monday,
-                    last_sunday,
-                    (date_trunc('year', make_date(last_year::int, 1, 1)) + 
-                     ((week_num - 1) * interval '7 days'))::date as prev_monday,
-                    (date_trunc('year', make_date(last_year::int, 1, 1)) + 
-                     ((week_num - 1) * interval '7 days') + interval '6 days')::date as prev_sunday
-                FROM dates
-            """)
-
-            last_monday, last_sunday, prev_monday, prev_sunday = cursor.fetchone()
-
-            # Set the date pickers
-            self.start_date2.set_date(last_monday)
-            self.end_date2.set_date(last_sunday)
-            self.start_date1.set_date(prev_monday)
-            self.end_date1.set_date(prev_sunday)
-
-    def set_this_week(self):
-        """Set dates for this week (through yesterday) and its year-ago comparison"""
-        with db_config.get_cursor() as cursor:
-            cursor.execute("""
-                WITH dates AS (
-                    SELECT 
-                        date_trunc('week', CURRENT_DATE)::date as current_monday,
-                        CURRENT_DATE - interval '1 day' as yesterday,
-                        date_part('week', CURRENT_DATE) as week_num,
-                        extract(year from CURRENT_DATE - interval '1 year') as last_year
-                )
-                SELECT 
-                    current_monday,
-                    yesterday,
-                    (date_trunc('year', make_date(last_year::int, 1, 1)) +
-                     ((week_num - 1) * interval '7 days'))::date as prev_monday,
-                    (date_trunc('year', make_date(last_year::int, 1, 1)) +
-                     ((week_num - 1) * interval '7 days') +
-                     (extract(day from yesterday - current_monday) * interval '1 day'))::date as prev_end
-                FROM dates
-            """)
-
-            current_monday, yesterday, prev_monday, prev_end = cursor.fetchone()
-
-            # Set the date pickers
-            self.start_date2.set_date(current_monday)
-            self.end_date2.set_date(yesterday)
-            self.start_date1.set_date(prev_monday)
-            self.end_date1.set_date(prev_end)
-
-    def set_current_promo(self):
-        """Set date ranges to compare current promotion period"""
-        try:
-            curr_start, curr_end, prev_start, prev_end = \
-                self.promo_manager.get_current_promo_comparison_dates()
-
-            # Set the date pickers
-            self.start_date1.set_date(prev_start)
-            self.end_date1.set_date(prev_end)
-            self.start_date2.set_date(curr_start)
-            self.end_date2.set_date(curr_end)
-
-            # Automatically trigger comparison
-            self.compare_periods()
-
-        except ValueError as e:
-            messagebox.showerror("Error", str(e))
-        except Exception as e:
-            messagebox.showerror(
-                "Error",
-                "Could not set promotion dates. Please check promotion period setup."
-            )
-
-    def show_promo_setup(self):
-        """Show the promotion period setup dialog"""
-        try:
-            # Create and show dialog
-            dialog = PromoSetupDialog(self.notebook.winfo_toplevel())
-            dialog.dialog.wait_window()  # Wait for dialog to close
-
-            # Reload periods
-            self.load_promotion_periods()
-
-            # Reset any cached data
-            self.last_results = {}
-
-            # Update display if needed
-            if self.current_brand:
-                self.show_brand_content(self.current_brand)
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Error setting up promotions: {str(e)}")
-
-    def _on_frame_configure(self, event=None):
-        """Reset the scroll region to encompass the inner frame"""
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-
-    def _on_canvas_configure(self, event):
-        """When canvas is resized, resize the inner frame to match"""
-        self.canvas.itemconfig(self.canvas_window, width=event.width)
-
-    def _on_mousewheel(self, event):
-        """Handle mousewheel scrolling"""
-        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-    def __del__(self):
-        """Cleanup any resources"""
-        pass
