@@ -1,69 +1,44 @@
-import os
+import sqlite3
 from pathlib import Path
-from dotenv import load_dotenv
-import psycopg2
-from psycopg2 import pool
 from contextlib import contextmanager
-
-# Load environment variables
-load_dotenv()
 
 
 class DatabaseConfig:
-    def __init__(self):
-        self.connection_pool = None
-        self.min_connections = 1
-        self.max_connections = 20
+    def __init__(self, db_path='fruit_sales.db'):
+        """Initialize database configuration
 
-        # Database connection parameters
-        self.db_params = {
-            'dbname': os.getenv('DB_NAME', 'sales_targeting'),
-            'user': os.getenv('DB_USER', 'sales_app'),
-            'password': os.getenv('DB_PASSWORD'),
-            'host': os.getenv('DB_HOST', 'corkscrew.mywinesense.com'),
-            'port': os.getenv('DB_PORT', '5432')
-        }
+        Args:
+            db_path (str): Path to SQLite database file
+        """
+        self.db_path = Path(db_path)
+        self.connection = None
 
-    def initialize_pool(self):
-        """Initialize the connection pool"""
-        if self.connection_pool is None:
-            try:
-                self.connection_pool = psycopg2.pool.SimpleConnectionPool(
-                    self.min_connections,
-                    self.max_connections,
-                    **self.db_params
-                )
-            except psycopg2.Error as e:
-                raise Exception(f"Error creating connection pool: {e}")
-
-    @contextmanager
-    def get_connection(self):
-        """Get a database connection from the pool"""
-        if self.connection_pool is None:
-            self.initialize_pool()
-
-        conn = None
-        try:
-            conn = self.connection_pool.getconn()
-            yield conn
-            conn.commit()
-        except Exception as e:
-            if conn:
-                conn.rollback()
-            raise e
-        finally:
-            if conn:
-                self.connection_pool.putconn(conn)
+    def connect(self):
+        """Create a database connection"""
+        if not self.connection:
+            self.connection = sqlite3.connect(self.db_path)
+            # Enable foreign keys
+            self.connection.execute("PRAGMA foreign_keys = ON")
 
     @contextmanager
     def get_cursor(self):
         """Get a database cursor"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            try:
-                yield cursor
-            finally:
-                cursor.close()
+        self.connect()
+        cursor = self.connection.cursor()
+        try:
+            yield cursor
+            self.connection.commit()
+        except Exception as e:
+            self.connection.rollback()
+            raise e
+        finally:
+            cursor.close()
+
+    def close(self):
+        """Close the database connection"""
+        if self.connection:
+            self.connection.close()
+            self.connection = None
 
     def setup_database(self):
         """Initialize the database schema"""
@@ -78,7 +53,7 @@ class DatabaseConfig:
                     phone TEXT,
                     address TEXT,
                     city TEXT,
-                    province TEXT,
+                    state TEXT,
                     postal_code TEXT
                 )
             ''')
@@ -87,13 +62,13 @@ class DatabaseConfig:
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_customer_email ON customers(email)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_customer_postal ON customers(postal_code)')
 
-            # Sales history table
+            # Sales history table with fruit categories
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS sales_history (
-                    id SERIAL PRIMARY KEY,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
                     invoice_id TEXT,
                     customer_id TEXT REFERENCES customers(customer_id),
-                    brand TEXT,
+                    brand TEXT CHECK(brand IN ('Apples', 'Grapes', 'Oranges')),
                     units_sold INTEGER,
                     item TEXT,
                     customer_name TEXT,
@@ -109,7 +84,7 @@ class DatabaseConfig:
             # Call tracking table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS call_tracking (
-                    call_id SERIAL PRIMARY KEY,
+                    call_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     customer_id TEXT REFERENCES customers(customer_id),
                     call_date DATE,
                     status TEXT CHECK(status IN ('successful_sale', 'considering', 'left_message', 'no_answer', 'other')),
@@ -122,21 +97,33 @@ class DatabaseConfig:
             # Promotion periods table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS promotion_periods (
-                    id SERIAL PRIMARY KEY,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
                     year INTEGER,
-                    period_number INTEGER,
+                    month INTEGER CHECK(month BETWEEN 1 AND 12),
                     start_date DATE,
                     end_date DATE,
                     description TEXT,
-                    UNIQUE(year, period_number)
+                    UNIQUE(year, month)
                 )
             ''')
 
-    def close_pool(self):
-        """Close the connection pool"""
-        if self.connection_pool:
-            self.connection_pool.closeall()
-            self.connection_pool = None
+            # Insert sample promotion periods
+            cursor.execute('''
+                INSERT OR IGNORE INTO promotion_periods (year, month, start_date, end_date, description)
+                VALUES 
+                    (2024, 1, '2024-01-01', '2024-01-31', 'Winter Citrus Festival'),
+                    (2024, 2, '2024-02-01', '2024-02-29', 'Valentine''s Red Fruits'),
+                    (2024, 3, '2024-03-01', '2024-03-31', 'Early Spring Varieties'),
+                    (2024, 4, '2024-04-01', '2024-04-30', 'Spring Harvest Special'),
+                    (2024, 5, '2024-05-01', '2024-05-31', 'May Fresh Picks'),
+                    (2024, 6, '2024-06-01', '2024-06-30', 'Summer Fruit Festival'),
+                    (2024, 7, '2024-07-01', '2024-07-31', 'Peak Season Celebration'),
+                    (2024, 8, '2024-08-01', '2024-08-31', 'August Abundance'),
+                    (2024, 9, '2024-09-01', '2024-09-30', 'Fall Harvest Kickoff'),
+                    (2024, 10, '2024-10-01', '2024-10-31', 'Autumn Selections'),
+                    (2024, 11, '2024-11-01', '2024-11-30', 'Thanksgiving Specials'),
+                    (2024, 12, '2024-12-01', '2024-12-31', 'Holiday Fruit Baskets')
+            ''')
 
 
 # Global database configuration instance

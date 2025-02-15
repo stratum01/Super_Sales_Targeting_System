@@ -120,3 +120,29 @@ KeyError: 'phone'
 2025-02-14 10:14:21,248 [INFO] comparison_system: Querying data for periods: 2024-01-29 to 2024-02-16 and 2025-01-27 to 2025-02-13
 2025-02-14 12:36:52,096 [INFO] comparison_system: Querying data for periods: 2024-01-29 to 2024-02-16 and 2025-01-27 to 2025-02-13
 2025-02-14 12:55:22,330 [INFO] comparison_system: Querying data for periods: 2024-01-29 to 2024-02-16 and 2025-01-27 to 2025-02-13
+2025-02-14 21:34:43,391 [INFO] comparison_system: Querying data for periods: 2025-01-31 to 2025-02-06 and 2025-02-07 to 2025-02-13
+2025-02-14 21:34:43,419 [ERROR] comparison_system: Error in show_performance_summary: 'ComparisonSystem' object has no attribute 'brand_content_frame'
+Traceback (most recent call last):
+  File "C:\Users\mrjch\PycharmProjects\Sales_Targeting_System\comparison_system.py", line 166, in show_performance_summary
+    for widget in self.brand_content_frame.winfo_children():
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'ComparisonSystem' object has no attribute 'brand_content_frame'
+2025-02-14 21:34:54,115 [INFO] comparison_system: Querying data for periods: 2025-01-31 to 2025-02-06 and 2025-02-07 to 2025-02-13
+2025-02-14 21:34:54,120 [ERROR] comparison_system: Error in show_performance_summary: 'ComparisonSystem' object has no attribute 'brand_content_frame'
+Traceback (most recent call last):
+  File "C:\Users\mrjch\PycharmProjects\Sales_Targeting_System\comparison_system.py", line 166, in show_performance_summary
+    for widget in self.brand_content_frame.winfo_children():
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'ComparisonSystem' object has no attribute 'brand_content_frame'
+2025-02-14 21:41:39,899 [INFO] comparison_system: Querying data for periods: 2025-01-31 to 2025-02-06 and 2025-02-07 to 2025-02-13
+2025-02-14 21:42:00,179 [INFO] comparison_system: Querying data for periods: 2025-01-31 to 2025-02-06 and 2025-02-07 to 2025-02-13
+2025-02-14 21:42:08,949 [INFO] comparison_system: Querying data for periods: 2025-01-01 to 2025-01-31 and 2025-02-01 to 2025-02-13
+2025-02-14 21:42:18,089 [INFO] comparison_system: Querying data for periods: 2025-01-31 to 2025-02-06 and 2025-02-07 to 2025-02-13
+2025-02-14 21:42:49,247 [INFO] comparison_system: Querying data for periods: 2025-01-01 to 2025-02-14 and 2024-01-01 to 2024-02-16
+2025-02-14 21:43:05,416 [ERROR] sales_targeting: Error in get_potential_customers: Incorrect number of bindings supplied. The current statement uses 2, and there are 3 supplied.
+Traceback (most recent call last):
+  File "C:\Users\mrjch\PycharmProjects\Sales_Targeting_System\sales_target-inator.py", line 247, in get_potential_customers
+    cursor.execute(count_query, params[:-2])  # Exclude LIMIT and OFFSET
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.ProgrammingError: Incorrect number of bindings supplied. The current statement uses 2, and there are 3 supplied.
+2025-02-14 21:43:42,189 [INFO] sales_targeting: No customer info found
