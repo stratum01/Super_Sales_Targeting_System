@@ -4,7 +4,6 @@ from tkinter import ttk, messagebox
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib
-
 matplotlib.use('TkAgg')  # Force TkAgg backend
 from tkcalendar import DateEntry
 from datetime import datetime, timedelta
