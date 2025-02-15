@@ -1,3 +1,6 @@
+[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/stratum01)
+really, i like it a lot.
+
 # Sales Targeting System
 
 A Python-based application for managing customer relationships, analyzing sales data, and tracking promotional performance for wine retailers.
