@@ -171,3 +171,9 @@ Traceback (most recent call last):
     cursor.execute(count_query, count_params)
     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
 sqlite3.ProgrammingError: Incorrect number of bindings supplied. The current statement uses 3, and there are 4 supplied.
+2025-02-16 15:24:38,009 [INFO] comparison_system: Querying data for periods: 2025-02-02 to 2025-02-08 and 2025-02-09 to 2025-02-15
+2025-02-16 15:24:44,117 [INFO] comparison_system: Querying data for periods: 2025-02-03 to 2025-02-09 and 2025-02-10 to 2025-02-15
+2025-02-16 15:33:01,261 [INFO] sales_targeting: Starting import from C:/Users/mrjch/PycharmProjects/Sales_Targeting_System/sample_customers.csv
+2025-02-16 15:49:22,098 [INFO] comparison_system: Querying data for periods: 2025-02-02 to 2025-02-08 and 2025-02-09 to 2025-02-15
+2025-02-16 15:49:31,278 [INFO] comparison_system: Querying data for periods: 2025-02-02 to 2025-02-08 and 2025-02-09 to 2025-02-15
+2025-02-16 15:49:38,172 [INFO] comparison_system: Querying data for periods: 2025-02-02 to 2025-02-08 and 2025-02-09 to 2025-02-15
