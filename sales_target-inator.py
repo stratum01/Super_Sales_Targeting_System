@@ -130,10 +130,68 @@ class SalesTargetingSystem:
         """Find potential customers based on purchase history and targeting criteria"""
         try:
             with db_config.get_cursor() as cursor:
-                base_params = [call_filter_days]
+                # Initialize parameters
+                where_clauses = ["1=1"]
+                params = []
 
-                # Base query structure
-                query = """
+                # Add brand filter
+                if target_brand:
+                    where_clauses.append("sh.brand = ?")
+                    params.append(target_brand)
+
+                # Add item filter
+                if target_item:
+                    where_clauses.append("sh.item = ?")
+                    params.append(target_item)
+
+                # Handle cross-sell targeting
+                if cross_sell_category:
+                    from_category, to_category = cross_sell_category.split(" → ")
+                    cross_sell_query = """
+                        WITH CrossSellCandidates AS (
+                            SELECT DISTINCT customer_id
+                            FROM sales_history
+                            WHERE brand = ?
+                            EXCEPT
+                            SELECT DISTINCT customer_id
+                            FROM sales_history
+                            WHERE brand = ?
+                        )
+                    """
+                    params.extend([from_category, to_category])
+                    where_clauses.append("sh.customer_id IN (SELECT customer_id FROM CrossSellCandidates)")
+
+                # Build count query
+                count_query = f"""
+                    WITH LastPurchase AS (
+                        SELECT 
+                            customer_id,
+                            MAX(date_sold) as last_purchase_date
+                        FROM sales_history
+                        GROUP BY customer_id
+                    ),
+                    RecentCalls AS (
+                        SELECT DISTINCT customer_id
+                        FROM call_tracking
+                        WHERE date('now', '-' || ? || ' days') <= call_date
+                        AND status != 'no_answer'
+                    )
+                    SELECT COUNT(DISTINCT sh.customer_id)
+                    FROM sales_history sh
+                    JOIN LastPurchase lp ON sh.customer_id = lp.customer_id
+                    LEFT JOIN RecentCalls rc ON sh.customer_id = rc.customer_id
+                    WHERE {' AND '.join(where_clauses)}
+                    AND date('now', '-' || ? || ' days') >= lp.last_purchase_date
+                    AND rc.customer_id IS NULL
+                """
+
+                # Execute count query with parameters
+                count_params = params + [call_filter_days, days_inactive]
+                cursor.execute(count_query, count_params)
+                total_count = cursor.fetchone()[0]
+
+                # Build main query
+                main_query = f"""
                     WITH LastPurchase AS (
                         SELECT 
                             customer_id,
@@ -153,99 +211,38 @@ class SalesTargetingSystem:
                         SELECT 
                             customer_id,
                             MAX(CASE WHEN brand = 'Apples' THEN 1 ELSE 0 END) as buys_premium,
-                            MAX(CASE WHEN brand = 'Grapes' THEN 1 ELSE 0 END) as buys_specialty,
-                            (
-                                SELECT brand
-                                FROM sales_history sh2
-                                WHERE sh2.customer_id = sales_history.customer_id
-                                GROUP BY brand
-                                ORDER BY COUNT(*) DESC
-                                LIMIT 1
-                            ) as favorite_category
+                            MAX(CASE WHEN brand = 'Grapes' THEN 1 ELSE 0 END) as buys_specialty
                         FROM sales_history
                         GROUP BY customer_id
                     )
-                """
-
-                # Add targeting criteria
-                where_clauses = ["1=1"]
-                params = base_params.copy()
-
-                if target_item:
-                    where_clauses.append("sh.item = ?")
-                    params.append(target_item)
-
-                if target_brand:
-                    where_clauses.append("sh.brand = ?")
-                    params.append(target_brand)
-
-                # Handle cross-sell targeting
-                if cross_sell_category:
-                    from_category, to_category = cross_sell_category.split(" → ")
-                    query += f"""
-                        , CrossSellCandidates AS (
-                            SELECT DISTINCT customer_id
-                            FROM sales_history
-                            WHERE brand = ?
-                            EXCEPT
-                            SELECT DISTINCT customer_id
-                            FROM sales_history
-                            WHERE brand = ?
-                        )
-                    """
-                    params.extend([from_category, to_category])
-                    where_clauses.append("customer_id IN (SELECT customer_id FROM CrossSellCandidates)")
-
-                # Complete the query
-                query += f"""
                     SELECT 
                         sh.customer_id,
                         MAX(sh.customer_name) as customer_name,
                         MAX(lp.last_purchase_date) as last_purchase_date,
-                        COUNT(DISTINCT sh.invoice_id) as purchase_count,
+                        lp.purchase_count,
                         cp.buys_premium,
                         cp.buys_specialty,
-                        cp.favorite_category,
                         MAX(ct.call_date) as last_call_date,
                         MAX(ct.status) as last_call_status
                     FROM sales_history sh
                     JOIN LastPurchase lp ON sh.customer_id = lp.customer_id
                     LEFT JOIN CustomerPreferences cp ON sh.customer_id = cp.customer_id
-                    LEFT JOIN call_tracking ct ON sh.customer_id = ct.customer_id
                     LEFT JOIN RecentCalls rc ON sh.customer_id = rc.customer_id
+                    LEFT JOIN call_tracking ct ON sh.customer_id = ct.customer_id
                     WHERE {' AND '.join(where_clauses)}
+                    AND date('now', '-' || ? || ' days') >= lp.last_purchase_date
                     AND rc.customer_id IS NULL
-                    GROUP BY sh.customer_id
-                    HAVING MAX(lp.last_purchase_date) <= date('now', '-' || ? || ' days')
-                    ORDER BY last_purchase_date DESC
+                    GROUP BY sh.customer_id, lp.purchase_count, cp.buys_premium, cp.buys_specialty
+                    ORDER BY MAX(lp.last_purchase_date) DESC
                     LIMIT ? OFFSET ?
                 """
 
-                params.extend([days_inactive, limit, offset])
+                # Execute main query with parameters
+                main_params = params + [call_filter_days, days_inactive, limit, offset]
+                cursor.execute(main_query, main_params)
 
-                # Execute query
-                cursor.execute(query, params)
                 columns = [desc[0] for desc in cursor.description]
                 data = cursor.fetchall()
-
-                # Get total count
-                count_query = f"""
-                    WITH LastPurchase AS (
-                        SELECT 
-                            customer_id,
-                            MAX(date_sold) as last_purchase_date
-                        FROM sales_history
-                        GROUP BY customer_id
-                    )
-                    SELECT COUNT(DISTINCT sh.customer_id)
-                    FROM sales_history sh
-                    JOIN LastPurchase lp ON sh.customer_id = lp.customer_id
-                    WHERE {' AND '.join(where_clauses)}
-                    AND lp.last_purchase_date <= date('now', '-' || ? || ' days')
-                """
-
-                cursor.execute(count_query, params[:-2])  # Exclude LIMIT and OFFSET
-                total_count = cursor.fetchone()[0]
 
                 return pd.DataFrame(data, columns=columns), total_count
 
