@@ -102,18 +102,17 @@ class SalesTargetingSystem:
             )
             SELECT 
                 cp.*,
-                latest_call.last_call_date,
-                latest_call.last_call_status
+                ct.call_date as last_call_date,
+                ct.status as last_call_status
             FROM CustomerPurchases cp
-            LEFT JOIN LATERAL (
+            LEFT JOIN (
                 SELECT 
-                    call_date as last_call_date,
-                    status as last_call_status
-                FROM call_tracking ct
-                WHERE ct.customer_id = cp.customer_id
-                ORDER BY call_date DESC
-                LIMIT 1
-            ) latest_call
+                    customer_id,
+                    MAX(call_date) as call_date,
+                    MAX(status) as status
+                FROM call_tracking
+                GROUP BY customer_id
+            ) ct ON cp.customer_id = ct.customer_id
             ORDER BY cp.total_units DESC
             LIMIT ?
             """
@@ -131,7 +130,7 @@ class SalesTargetingSystem:
         try:
             with db_config.get_cursor() as cursor:
                 # Initialize parameters
-                where_clauses = ["1=1"]
+                where_clauses = []
                 params = []
 
                 # Add brand filter
@@ -144,22 +143,9 @@ class SalesTargetingSystem:
                     where_clauses.append("sh.item = ?")
                     params.append(target_item)
 
-                # Handle cross-sell targeting
-                if cross_sell_category:
-                    from_category, to_category = cross_sell_category.split(" → ")
-                    cross_sell_query = """
-                        WITH CrossSellCandidates AS (
-                            SELECT DISTINCT customer_id
-                            FROM sales_history
-                            WHERE brand = ?
-                            EXCEPT
-                            SELECT DISTINCT customer_id
-                            FROM sales_history
-                            WHERE brand = ?
-                        )
-                    """
-                    params.extend([from_category, to_category])
-                    where_clauses.append("sh.customer_id IN (SELECT customer_id FROM CrossSellCandidates)")
+                # If no where clauses, add TRUE condition
+                if not where_clauses:
+                    where_clauses.append("1=1")
 
                 # Build count query
                 count_query = f"""
@@ -167,7 +153,8 @@ class SalesTargetingSystem:
                         SELECT 
                             customer_id,
                             MAX(date_sold) as last_purchase_date
-                        FROM sales_history
+                        FROM sales_history sh
+                        {f'WHERE {" AND ".join(where_clauses)}' if where_clauses else ''}
                         GROUP BY customer_id
                     ),
                     RecentCalls AS (
@@ -180,8 +167,7 @@ class SalesTargetingSystem:
                     FROM sales_history sh
                     JOIN LastPurchase lp ON sh.customer_id = lp.customer_id
                     LEFT JOIN RecentCalls rc ON sh.customer_id = rc.customer_id
-                    WHERE {' AND '.join(where_clauses)}
-                    AND date('now', '-' || ? || ' days') >= lp.last_purchase_date
+                    WHERE date('now', '-' || ? || ' days') >= lp.last_purchase_date
                     AND rc.customer_id IS NULL
                 """
 
@@ -198,7 +184,8 @@ class SalesTargetingSystem:
                             customer_name,
                             MAX(date_sold) as last_purchase_date,
                             COUNT(DISTINCT invoice_id) as purchase_count
-                        FROM sales_history
+                        FROM sales_history sh
+                        {f'WHERE {" AND ".join(where_clauses)}' if where_clauses else ''}
                         GROUP BY customer_id, customer_name
                     ),
                     RecentCalls AS (
@@ -217,28 +204,34 @@ class SalesTargetingSystem:
                     )
                     SELECT 
                         sh.customer_id,
-                        MAX(sh.customer_name) as customer_name,
-                        MAX(lp.last_purchase_date) as last_purchase_date,
+                        sh.customer_name,
+                        lp.last_purchase_date,
                         lp.purchase_count,
                         cp.buys_premium,
                         cp.buys_specialty,
                         MAX(ct.call_date) as last_call_date,
                         MAX(ct.status) as last_call_status
-                    FROM sales_history sh
-                    JOIN LastPurchase lp ON sh.customer_id = lp.customer_id
-                    LEFT JOIN CustomerPreferences cp ON sh.customer_id = cp.customer_id
-                    LEFT JOIN RecentCalls rc ON sh.customer_id = rc.customer_id
-                    LEFT JOIN call_tracking ct ON sh.customer_id = ct.customer_id
-                    WHERE {' AND '.join(where_clauses)}
-                    AND date('now', '-' || ? || ' days') >= lp.last_purchase_date
+                    FROM LastPurchase lp
+                    JOIN sales_history sh ON lp.customer_id = sh.customer_id
+                    LEFT JOIN CustomerPreferences cp ON lp.customer_id = cp.customer_id
+                    LEFT JOIN RecentCalls rc ON lp.customer_id = rc.customer_id
+                    LEFT JOIN call_tracking ct ON lp.customer_id = ct.customer_id
+                    WHERE date('now', '-' || ? || ' days') >= lp.last_purchase_date
                     AND rc.customer_id IS NULL
-                    GROUP BY sh.customer_id, lp.purchase_count, cp.buys_premium, cp.buys_specialty
-                    ORDER BY MAX(lp.last_purchase_date) DESC
+                    {f'AND {" AND ".join(where_clauses)}' if where_clauses else ''}
+                    GROUP BY sh.customer_id, sh.customer_name, lp.last_purchase_date, lp.purchase_count, 
+                             cp.buys_premium, cp.buys_specialty
+                    ORDER BY lp.last_purchase_date DESC
                     LIMIT ? OFFSET ?
                 """
 
                 # Execute main query with parameters
-                main_params = params + [call_filter_days, days_inactive, limit, offset]
+                main_params = params + [call_filter_days, days_inactive] + params + [limit, offset]
+
+                # Debug output
+                self.logger.debug(f"Executing query with params: {main_params}")
+                self.logger.debug(f"Where clauses: {where_clauses}")
+
                 cursor.execute(main_query, main_params)
 
                 columns = [desc[0] for desc in cursor.description]
@@ -249,6 +242,19 @@ class SalesTargetingSystem:
         except Exception as e:
             self.logger.error(f"Error in get_potential_customers: {str(e)}", exc_info=True)
             raise
+
+    def check_data(self):
+        """Check if we have data for each category"""
+        with db_config.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT brand, COUNT(*) as count, 
+                       COUNT(DISTINCT customer_id) as customers,
+                       MIN(date_sold) as earliest,
+                       MAX(date_sold) as latest
+                FROM sales_history
+                GROUP BY brand
+            """)
+            return cursor.fetchall()
 
     def record_call(self, customer_id, status, notes, brand=None, item=None):
         """Record the outcome of a sales call"""
@@ -1244,12 +1250,16 @@ class SalesTargetingGUI:
                 messagebox.showerror("Error", "Please select a fruit variety first")
                 return
 
+            self.logger.debug(f"Starting Big Banana search for variety: {variety}")
+
             # Clear existing items
             for item in self.results_tree.get_children():
                 self.results_tree.delete(item)
 
             # Get results
             results = self.system.get_big_banana_customers(variety)
+
+            self.logger.debug(f"Found {len(results)} customers for Big Banana search")
 
             # Populate treeview
             for _, row in results.iterrows():
@@ -1270,6 +1280,7 @@ class SalesTargetingGUI:
             self.next_button.config(state='disabled')
 
         except Exception as e:
+            self.logger.error(f"Error in big_banana_search: {str(e)}", exc_info=True)
             messagebox.showerror("Error", str(e))
 
     def export_results(self):
